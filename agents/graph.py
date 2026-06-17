@@ -7,7 +7,7 @@ import httpx
 from typing import List, Dict, Any, Annotated, Union
 from pydantic import BaseModel, Field
 from langgraph.graph import StateGraph, END 
-from langgraph.checkpoint.sqlite import SqliteSaver
+from langgraph_checkpoint_sqlite import SqliteSaver
 from sentence_transformers import SentenceTransformer
 import chromadb
 
