@@ -1,260 +1,114 @@
+# ui/dashboard.py
 import streamlit as st
-import pandas as pd
-import plotly.express as px
+import plotly.graph_objects as go
 import sqlite3
-import time
+import json
+import httpx
 
-# ---------------------------------------------------
-# PAGE CONFIG
-# ---------------------------------------------------
+# =====================================================================
+# 🏢 STREAMLIT MULTI-COLUMN LAYOUT CONFIGURATION
+# =====================================================================
+st.set_page_config(layout="wide", page_title="LogiHive Live Operations Control Tower")
+st.title("📊 LogiTwin Hyperlocal Fulfillment Resilience Map Dashboard")
 
-st.set_page_config(
-    page_title="LogiHive Live Operations Control Tower",
-    layout="wide"
-)
+# Define target endpoints for executing live state approvals
+INGESTION_GATEWAY_URL = "http://localhost:8000/api/disruption"
 
-st.title("📊 LogiHive Live Operations Control Tower")
-
-# ---------------------------------------------------
-# AUTO REFRESH EVERY 5 SECONDS
-# ---------------------------------------------------
-
-if "last_refresh" not in st.session_state:
-    st.session_state.last_refresh = time.time()
-
-if time.time() - st.session_state.last_refresh > 5:
-    st.session_state.last_refresh = time.time()
-    st.rerun()
-
-# ---------------------------------------------------
-# FETCH CHECKPOINT DATA
-# ---------------------------------------------------
-
+# =====================================================================
+# 💾 CHECKPOINTER DATABASE STORAGE INTERFACES
+# =====================================================================
 def fetch_latest_serialized_states():
-
+    """
+    Queries checkpoint transactions straight out of Gayatri's persistent 
+    SqliteSaver tracking registry database file to expose blocked thread segments.
+    """
     try:
-        conn = sqlite3.connect(
-            "langgraph_state_registry.db",
-            check_same_thread=False
-        )
-
+        conn = sqlite3.connect("langgraph_state_registry.db", check_same_thread=False)
         cursor = conn.cursor()
-
+        # Query active records generated natively within the LangGraph SqliteSaver engine schema
         cursor.execute("""
-        SELECT *
-        FROM checkpoints
-        ORDER BY rowid DESC
-        LIMIT 5
+            SELECT thread_id, checkpoint 
+            FROM checkpoints 
+            ORDER BY created_at DESC 
+            LIMIT 5
         """)
-
         rows = cursor.fetchall()
-
         conn.close()
-
-        return rows
-
-    except Exception:
+        
+        parsed_threads = []
+        for row in rows:
+            thread_id, raw_checkpoint = row[0], row[1]
+            # De-serialize blobs to check internal risk tensors and approval statuses
+            checkpoint_data = json.loads(raw_checkpoint)
+            channel_values = checkpoint_data.get("v", {}).get("channel_values", {})
+            
+            parsed_threads.append({
+                "thread_id": thread_id,
+                "risk_score": channel_values.get("calculated_risk_tensor", 0.0),
+                "approved": channel_values.get("human_approved", False),
+                "logs": channel_values.get("execution_timeline_logs", [])
+            })
+        return parsed_threads
+    except Exception as e:
+        # Gracefully handle initial boots where the db file hasn't been written to disk yet
         return []
 
+# =====================================================================
+# 🗺️ PLOTLY MULTIMODAL GEOSPATIAL MAP GENERATOR
+# =====================================================================
+def generate_mumbai_asset_map(active_threads):
+    """
+    Generates a real-time scatter map projection of Mumbai logistics components,
+    updating node color vectors instantly if a risk threshold breach occurs.
+    """
+    # Fixed coordinate map layout pins for hubs across Mumbai
+    mumbai_latitudes = [19.0760, 19.1254, 19.1162, 19.0544, 19.1170]
+    mumbai_longitudes = [72.8777, 72.9100, 72.8562, 72.8294, 72.9056]
+    node_identifiers = ["Mother-WH Amul", "Mother-WH HUL", "DS Andheri East", "DS Bandra West", "DS Powai"]
+    
+    # Standard healthy color matrix configuration maps green
+    node_colors = ['green', 'green', 'green', 'green', 'green']
+    
+    # If a live thread contains an unapproved critical risk, highlight the dark store node
+    for thread in active_threads:
+        if thread["risk_score"] > 0.75 and not thread["approved"]:
+            # Scenario simulation: Andheri East node goes critical red
+            node_colors[2] = 'red'
+            node_colors[4] = 'orange' # Powai threshold warning limits triggered
 
-# ---------------------------------------------------
-# FETCH LIVE TELEMETRY DATA
-# ---------------------------------------------------
+    geo_fig = go.Figure(go.Scattermapbox(
+        lat=mumbai_latitudes,
+        lon=mumbai_longitudes,
+        mode='markers+text',
+        marker=go.scattermapbox.Marker(size=15, color=node_colors, opacity=0.9),
+        text=node_identifiers,
+        textposition="top center",
+        hoverinfo="text"
+    ))
 
-def fetch_latest_data():
-
-    try:
-
-        conn = sqlite3.connect(
-            "langgraph_state_registry.db",
-            check_same_thread=False
-        )
-
-        query = """
-        SELECT
-            store_name,
-            latitude,
-            longitude,
-            risk
-        FROM telemetry
-        """
-
-        df = pd.read_sql_query(
-            query,
-            conn
-        )
-
-        conn.close()
-
-        return df
-
-    except Exception:
-
-        return pd.DataFrame({
-
-            "store_name": [
-                "DarkStore_Virar",
-                "DarkStore_Vasai",
-                "DarkStore_Malad",
-                "DarkStore_Borivali"
-            ],
-
-            "latitude": [
-                19.455,
-                19.391,
-                19.186,
-                19.230
-            ],
-
-            "longitude": [
-                72.811,
-                72.839,
-                72.848,
-                72.856
-            ],
-
-            "risk": [
-                0.30,
-                0.45,
-                0.85,
-                0.92
-            ]
-        })
-
-
-# ---------------------------------------------------
-# LOAD DATA
-# ---------------------------------------------------
-
-data = fetch_latest_data()
-
-data["Status"] = data["risk"].apply(
-    lambda x:
-    "High Risk"
-    if x > 0.75
-    else "Normal"
-)
-
-high_risk = data[data["risk"] > 0.75]
-
-# ---------------------------------------------------
-# KPI CARDS
-# ---------------------------------------------------
-
-col1, col2, col3 = st.columns(3)
-
-with col1:
-    st.metric(
-        "Total Stores",
-        len(data)
+    geo_fig.update_layout(
+        mapbox_style="carto-positron",
+        mapbox_zoom=10.5,
+        mapbox_center={"lat": 19.0900, "lon": 72.8700},
+        margin={"r":0,"t":0,"l":0,"b":0},
+        height=600
     )
+    return geo_fig
 
-with col2:
-    st.metric(
-        "High Risk Stores",
-        len(high_risk)
-    )
+# =====================================================================
+# 🎛️ CORE INTERFACE RENDERING ENGINE BLOCK
+# =====================================================================
 
-with col3:
-    st.metric(
-        "Average Risk",
-        round(data["risk"].mean(), 2)
-    )
+# Continuously read active backend states from disk lines
+active_system_threads = fetch_latest_serialized_states()
 
-# ---------------------------------------------------
-# MAIN LAYOUT
-# ---------------------------------------------------
+# Render a structural split pane interface matrix layout
+left_pane, right_pane = st.columns([2, 1])
 
-left_col, right_col = st.columns([2, 1])
+with left_pane:
+    st.subheader("📍 Mumbai Supply Chain Topology Asset Map")
+    mumbai_map = generate_mumbai_asset_map(active_system_threads)
+    st.plotly_chart(mumbai_map, use_container_width=True)
 
-# ---------------------------------------------------
-# MAP
-# ---------------------------------------------------
-
-with left_col:
-
-    st.subheader(
-        "📍 Mumbai Fulfillment Network"
-    )
-
-    fig = px.scatter_map(
-        data,
-        lat="latitude",
-        lon="longitude",
-        color="Status",
-        hover_name="store_name",
-        size="risk",
-        zoom=9
-    )
-
-    st.plotly_chart(
-        fig,
-        use_container_width=True
-    )
-
-# ---------------------------------------------------
-# CHECKPOINT REGISTRY
-# ---------------------------------------------------
-
-with right_col:
-
-    st.subheader(
-        "🛡️ Checkpoint Registry"
-    )
-
-    active_threads = fetch_latest_serialized_states()
-
-    if not active_threads:
-
-        st.success(
-            "🟢 No active interruptions detected"
-        )
-
-    else:
-
-        st.warning(
-            "🚨 Active serialized agent states detected"
-        )
-
-        for row in active_threads:
-
-            st.info(
-                f"Checkpoint: {row}"
-            )
-
-# ---------------------------------------------------
-# HIGH RISK ALERTS
-# ---------------------------------------------------
-
-if not high_risk.empty:
-
-    st.error(
-        f"⚠ {len(high_risk)} High-Risk Store(s) Detected!"
-    )
-
-    st.write("### Affected Stores")
-
-    st.dataframe(
-        high_risk[
-            ["store_name", "risk"]
-        ]
-    )
-
-# ---------------------------------------------------
-# LIVE TELEMETRY TABLE
-# ---------------------------------------------------
-
-st.write("### Live Telemetry Feed")
-
-st.dataframe(
-    data,
-    use_container_width=True
-)
-
-# ---------------------------------------------------
-# REFRESH STATUS
-# ---------------------------------------------------
-
-st.caption(
-    "🔄 Dashboard auto-refreshes every 5 seconds"
-)
+with right_pane:
+    st.subheader("🛡️ Human-In-The-Loop (HITL) Operations")
