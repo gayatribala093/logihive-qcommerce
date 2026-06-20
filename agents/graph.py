@@ -1,5 +1,6 @@
 # agents/graph.py
 import os
+import asyncio
 import copy
 import json
 import sqlite3
@@ -7,7 +8,7 @@ import httpx
 from typing import List, Dict, Any, Annotated, Union
 from pydantic import BaseModel, Field
 from langgraph.graph import StateGraph, END 
-from langgraph_checkpoint_sqlite import SqliteSaver
+from langgraph.checkpoint.sqlite import SqliteSaver
 from sentence_transformers import SentenceTransformer
 import chromadb
 
@@ -73,8 +74,11 @@ class LogiHiveGraphState(BaseModel):
 # 🔍 ASYNCHRONOUS AGENTIC RAG UTILITY
 # =====================================================================
 async def execute_agentic_rag(query: str, top_k: int = 3) -> List[Dict[str, Any]]:
-    """Asynchronously generates embeddings and runs vector queries on local playbooks."""
-    query_vector = EMBEDDING_MODEL.encode(query).tolist()
+    """Asynchronously generates embeddings via worker threads to prevent freezes."""
+    # 💎 FIX: CPU-bound math offloaded to a background thread pool safely
+    query_vector = await asyncio.to_thread(EMBEDDING_MODEL.encode, query)
+    query_vector = query_vector.tolist()
+    
     results = PLAYBOOK_COLLECTION.query(query_embeddings=[query_vector], n_results=top_k)
     
     extracted_policies = []
@@ -118,7 +122,7 @@ async def analyst_agent_node(state: LogiHiveGraphState) -> Dict[str, Any]:
     user_prompt = f"Incident Report: {latest_alert_text}\nCompliance Guideline Reference: {playbook_context}"
     
     payload = {
-        "model": "qwen2.5-vl",
+        "model": "qwen2.5vl:latest",
         "messages": [
             {"role": "system", "content": system_prompt},
             {"role": "user", "content": user_prompt}
@@ -199,10 +203,8 @@ workflow.add_edge("mitigation_agent", END)
 sqlite_conn = sqlite3.connect("langgraph_state_registry.db", check_same_thread=False)
 memory_checkpointer = SqliteSaver(sqlite_conn)
 
-# Compile the graph binding the checkpointer and isolating the mitigation boundary line
 app_compiled = workflow.compile(
     checkpointer=memory_checkpointer,
-    interrupt_before=["mitigation_agent"] # Halts execution exactly before mitigation node runs
+    interrupt_before=["mitigation_agent"]
 )
-
-print("🚀 Successfully compiled Day 4 LogiHive LangGraph State Engine with SqliteSaver & Ollama APIs.")
+print("🚀 Successfully compiled Day 5 LogiHive Graph Engine with Stable Module Persistence.")

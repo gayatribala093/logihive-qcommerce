@@ -6,11 +6,11 @@ from fastapi import FastAPI, HTTPException
 from pydantic import BaseModel, Field
 from redis.asyncio import Redis
 
-# Direct architecture link to Gayatri's compiled graph context inside agents/graph.py
+# Direct architectural link to Gayatri's compiled graph context inside agents/graph.py
 from agents.graph import app_compiled  
 
 # =====================================================================
-# 📦 HIGH-VELOCITY INGESTION CONTRACTS (Synced with interfaces.py)
+# 📦 HIGH-VELOCITY INGESTION DATA GUARDRAILS (Synced with interfaces.py)
 # =====================================================================
 
 class RiderTelemetryPayload(BaseModel):
@@ -24,6 +24,11 @@ class DisruptionAlertPayload(BaseModel):
     alert_id: str = Field(..., description="Unique incident identifier record")
     location_zone: str = Field(..., description="Target Mumbai regional pocket")
     alert_text: str = Field(..., description="Raw textual news snippet or log feed")
+
+
+class ResumeStatePayload(BaseModel):
+    thread_id: str = Field(..., description="Target thread session to unblock")
+    supervisor_token: str = Field(..., description="Security access validation token")
 
 
 # Initialize high-speed ASYNCHRONOUS Redis client interface
@@ -53,8 +58,10 @@ async def slow_path_queue_worker():
             # Seed initial configuration states for the targeted session execution thread
             thread_config = {"configurable": {"thread_id": str(parsed_event.get("alert_id", "default_id"))}}
             
-            # Programmatically invoke compiled state machine loop natively
-            await app_compiled.ainvoke(
+            # ✅ OFF-LOAD TO THREAD WORKER: Safe background execution loop pattern
+            # Offloads the synchronous module checkpointer invocation cleanly to keep FastAPI unblocked.
+            await asyncio.to_thread(
+                app_compiled.invoke,
                 {
                     "active_disruptions": [parsed_event],
                     "live_telemetry_registry": {"current_status": "under_evaluation"}
@@ -111,3 +118,45 @@ async def ingest_disruption_alert(payload: DisruptionAlertPayload):
         return {"status": "success", "message": "Disruption alert offloaded to queue worker."}
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
+
+
+@app.post("/api/agent/resume")
+async def resume_agent_workflow(payload: ResumeStatePayload):
+    """
+    Day 5 HITL Gateway Endpoint: Accepts a supervisor validation token, 
+    re-loads the state memory matching the thread, clears the breakpoint,
+    and pushes the graph forward into the mitigation node calculations.
+    """
+    # Verify secure administrative access token contract
+    if payload.supervisor_token != "LOGIHIVE_SECURE_AUTH_2026":
+        raise HTTPException(status_code=403, detail="Invalid supervisor authorization token.")
+
+    # Format the configuration parameter matching our SqliteSaver key requirements
+    thread_config = {"configurable": {"thread_id": payload.thread_id}}
+    
+    try:
+        # ✅ RUN IN THREAD POOL WORKER: Pull the current frozen snapshot state from the DB
+        current_state_snapshot = await asyncio.to_thread(app_compiled.get_state, thread_config)
+        if not current_state_snapshot.next:
+            return {"status": "skipped", "message": "Target thread session is completely processed or inactive."}
+
+        print(f"\n🔓 [HITL RELEASE] Webhook Activated for Thread: {payload.thread_id}. Overriding status flags...")
+
+        # ✅ RUN IN THREAD POOL WORKER: Update the state to mark human authorization as valid
+        await asyncio.to_thread(
+            app_compiled.update_state,
+            thread_config,
+            {"human_approved": True, "calculated_risk_tensor": 0.0}, # Reset risk parameter levels
+            as_node="analyst_agent"
+        )
+
+        # ✅ RUN IN THREAD POOL WORKER: Re-invoke execution loop past the breakpoint boundary safely
+        await asyncio.to_thread(app_compiled.invoke, None, config=thread_config)
+        
+        return {
+            "status": "success",
+            "message": f"Thread {payload.thread_id} unblocked safely. Mitigation instructions committed."
+        }
+        
+    except Exception as err:
+        raise HTTPException(status_code=500, detail=f"Failed to unblock thread context matrix: {str(err)}")
