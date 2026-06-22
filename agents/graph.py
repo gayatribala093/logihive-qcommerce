@@ -1,9 +1,8 @@
 # agents/graph.py
-import asyncio
 import copy
 import json
 import sqlite3
-import httpx
+import httpx  # Standard synchronous HTTP handling
 from typing import List, Dict, Any, Annotated, Union
 from pydantic import BaseModel, Field
 from langgraph.graph import StateGraph, END
@@ -50,14 +49,11 @@ class LogiHiveGraphState(BaseModel):
     execution_timeline_logs: Annotated[List[Dict[str, Any]], reduce_disruption_alerts] = Field(default_factory=list)
 
 # =====================================================================
-# 🔍 THREAD-ISOLATED ASYNCHRONOUS AGENTIC RAG UTILITY
+# 🔍 SYNCHRONOUS AGENTIC RAG UTILITY
 # =====================================================================
-async def execute_agentic_rag(query: str, top_k: int = 3) -> List[Dict[str, Any]]:
-    """Asynchronously generates embeddings and queries localized compliance vector rows."""
-    # Explicitly offload CPU-bound token math to background workers to save the FastAPI loop thread
-    query_vector = await asyncio.to_thread(EMBEDDING_MODEL.encode, query)
-    query_vector = query_vector.tolist()
-    
+def execute_agentic_rag(query: str, top_k: int = 3) -> List[Dict[str, Any]]:
+    """Synchronously generates embeddings and queries localized compliance vector rows."""
+    query_vector = EMBEDDING_MODEL.encode(query).tolist()
     results = PLAYBOOK_COLLECTION.query(query_embeddings=[query_vector], n_results=top_k)
     
     extracted_policies = []
@@ -72,19 +68,20 @@ async def execute_agentic_rag(query: str, top_k: int = 3) -> List[Dict[str, Any]
     return extracted_policies
 
 # =====================================================================
-# 🏗️ ACTIVE WORKFLOW MULTI-AGENT NODE LOGIC
+# 🏗️ SYNCHRONOUS WORKFLOW MULTI-AGENT NODE LOGIC
 # =====================================================================
-async def analyst_agent_node(state: LogiHiveGraphState) -> Dict[str, Any]:
+def analyst_agent_node(state: LogiHiveGraphState) -> Dict[str, Any]:
+    """Synchronous Analyst Agent to match the stable SqliteSaver runtime."""
     print("\n⚡ [NODE ACTIVE] Analyst Agent: Commencing Context Fusion...")
     
     latest_alert_text = "Severe weather infrastructure gridlock reported near regional hub."
     if state.active_disruptions:
         latest_alert_text = state.active_disruptions[-1].alert_text
 
-    rag_extracts = await execute_agentic_rag(query=latest_alert_text, top_k=1)
+    rag_extracts = execute_agentic_rag(query=latest_alert_text, top_k=1)
     playbook_context = rag_extracts[0]["document_text"] if rag_extracts else "Execute default layout overrides."
 
-    # Direct async client connection payload targeted to Kashish's local Ollama server string
+    # Direct synchronous HTTP client call to local Ollama container
     ollama_url = "http://localhost:11434/api/chat"
     system_prompt = (
         "You are an expert logistics analyzer. Read the data and output strictly a valid JSON object "
@@ -106,8 +103,9 @@ async def analyst_agent_node(state: LogiHiveGraphState) -> Dict[str, Any]:
     summary_text = "VLM analyzed critical infrastructural blockade lines."
 
     try:
-        async with httpx.AsyncClient(timeout=30.0) as client:
-            response = await client.post(ollama_url, json=payload)
+        # ✅ Using synchronous httpx.Client instead of AsyncClient
+        with httpx.Client(timeout=30.0) as client:
+            response = client.post(ollama_url, json=payload)
             if response.status_code == 200:
                 raw_content = response.json().get("message", {}).get("content", "{}")
                 parsed_tensor = json.loads(raw_content)
@@ -115,7 +113,7 @@ async def analyst_agent_node(state: LogiHiveGraphState) -> Dict[str, Any]:
                 summary_text = parsed_tensor.get("reasoning_summary", "Completed extraction.")
                 print(f"✅ Ollama VLM Client Response Validated. Metric: {computed_score}")
     except Exception as err:
-        print(f"⚠️ Ollama client mapping bypassed: {str(err)}. Injecting testing parameters.")
+        print(f"⚠️ Ollama client connection skipped: {str(err)}. Injecting simulation defaults.")
 
     return {
         "calculated_risk_tensor": computed_score,
@@ -132,34 +130,39 @@ def mitigation_agent_node(state: LogiHiveGraphState) -> Dict[str, Any]:
 # =====================================================================
 # 🗺️ GRAPH TOPOLOGY & PERSISTENCE INITIALIZATION
 # =====================================================================
+# agents/graph.py (Topology Configuration Update)
+
 def evaluation_gatekeeper_router(state: LogiHiveGraphState) -> str:
     print(f"\n🔬 [ROUTING HUB] Current Disruption Risk Variable: {state.calculated_risk_tensor}")
-    if state.calculated_risk_tensor > 0.75 and not state.human_approved:
-        print("🚨 CRITICAL LINE: safety threshold breached! Activating local breakpoint serialization.")
-        return "trigger_breakpoint"
+    # Simply declare the next path node target; let interrupt_before handle the physical pause boundary
     return "pass_to_mitigation"
 
+# Instantiating the LangGraph engine topology mapping
 workflow = StateGraph(LogiHiveGraphState)
+
 workflow.add_node("analyst_agent", analyst_agent_node)
 workflow.add_node("mitigation_agent", mitigation_agent_node)
+
 workflow.set_entry_point("analyst_agent")
 
+# ✅ FIXED: Route directly to mitigation_agent. LangGraph will auto-pause before entering it!
 workflow.add_conditional_edges(
     "analyst_agent",
     evaluation_gatekeeper_router,
     {
-        "trigger_breakpoint": "analyst_agent",
         "pass_to_mitigation": "mitigation_agent"
     }
 )
 workflow.add_edge("mitigation_agent", END)
 
-# Thread-safe connection parameters for the module level compiler imports
+# Establish local SQLite disk connection tracking parameters
 sqlite_conn = sqlite3.connect("langgraph_state_registry.db", check_same_thread=False)
 memory_checkpointer = SqliteSaver(sqlite_conn)
 
+# Compile the graph binding the checkpointer and isolating the mitigation boundary line
 app_compiled = workflow.compile(
     checkpointer=memory_checkpointer,
-    interrupt_before=["mitigation_agent"]
+    interrupt_before=["mitigation_agent"] # 👈 Intercepts and hits the hard disk serialization breakpoint right here!
 )
+
 print("🚀 Successfully compiled Day 5 LogiHive Graph Engine with Stable Module Persistence.")
