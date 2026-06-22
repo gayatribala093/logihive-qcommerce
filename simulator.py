@@ -8,7 +8,7 @@ FASTAPI_GATEWAY_URL = "http://localhost:8000"
 
 async def simulate_streaming_telemetry():
     """Generates continuous rider location transactions to stress-test your fast-path ingestion."""
-    print("🛸 Telemetry Stream Ingestion Simulator Activated...")
+    print("🛸 Telemetry Ingestion Simulator Active...")
     async with httpx.AsyncClient() as client:
         while True:
             try:
@@ -18,36 +18,31 @@ async def simulate_streaming_telemetry():
                     "longitude": random.uniform(72.800, 72.950),
                     "current_order_id": f"ord_{random.randint(5000, 9999)}"
                 }
-                # Stress test the ultra-fast Redis cache ingestion track
                 await client.post(f"{FASTAPI_GATEWAY_URL}/api/telemetry", json=mock_telemetry_packet)
-            except Exception as e:
-                print(f"Simulator Connection Warning (Telemetry Channel): {str(e)}")
-            await asyncio.sleep(0.05) # 50ms interval injection density rate
+            except Exception:
+                pass
+            await asyncio.sleep(0.05)  # Continuous 50ms interval data streaming pulses
 
 async def simulate_disruption_triggers():
     """Injects high-risk localized emergencies to test your slow-path multi-agent checkpoint cycles."""
-    print("🚨 Macroeconomic Anomaly Disruption Channel Activated...")
+    print("🚨 Emergency Disruption Generation Channel Active...")
     async with httpx.AsyncClient() as client:
         while True:
-            await asyncio.sleep(12) # Interval window delay before hitting endpoints
+            await asyncio.sleep(15)  # Introduce an infrastructure storm metric every 15 seconds
             try:
                 incident_id = f"mumbai_crisis_{random.randint(1000, 9999)}"
                 mock_alert_packet = {
                     "alert_id": incident_id,
-                    "location_zone": random.choice(["Andheri East", "Powai", "Bandra West"]),
+                    "location_zone": "Andheri East",
                     "alert_text": "Severe infrastructure blockage reported. Local transportation gridlocked."
                 }
-                print(f"\n💥 [SIMULATOR] Injecting Emergency Incident: {incident_id}")
+                print(f"\n💥 [SIMULATOR ALERT] Dropping Incident Scenario Vector: {incident_id}")
                 await client.post(f"{FASTAPI_GATEWAY_URL}/api/disruption", json=mock_alert_packet)
             except Exception as e:
-                print(f"Simulator Connection Warning (Alert Channel): {str(e)}")
+                print(f"Simulator warning: {str(e)}")
 
 async def main():
-    # Execute both simulation streams concurrently in the asyncio runtime event loop
-    await asyncio.gather(
-        simulate_streaming_telemetry(),
-        simulate_disruption_triggers()
-    )
+    await asyncio.gather(simulate_streaming_telemetry(), simulate_disruption_triggers())
 
 if __name__ == "__main__":
     try:
