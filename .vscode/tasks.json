@@ -1,0 +1,56 @@
+{
+  "version": "2.0.0",
+  "tasks": [
+    {
+      "label": "LogiHive: FastAPI Gateway",
+      "type": "shell",
+      "command": "${workspaceFolder}\\.venv\\Scripts\\python.exe",
+      "args": ["-m", "uvicorn", "core.ingestion:app", "--reload", "--port", "8000"],
+      "options": { "cwd": "${workspaceFolder}" },
+      "isBackground": true,
+      "presentation": { "panel": "dedicated", "reveal": "always", "group": "logihive" },
+      "problemMatcher": {
+        "pattern": {
+          "regexp": "^.*$",
+          "file": 1,
+          "location": 2,
+          "message": 3
+        },
+        "background": {
+          "activeOnStart": true,
+          "beginsPattern": "^.*Started reloader.*$",
+          "endsPattern": "^.*Application startup complete.*$"
+        }
+      }
+    },
+    {
+      "label": "LogiHive: Streamlit Dashboard",
+      "type": "shell",
+      "command": "${workspaceFolder}\\.venv\\Scripts\\python.exe",
+      "args": ["-m", "streamlit", "run", "ui/dashboard.py", "--", "--api", "http://localhost:8000"],
+      "options": { "cwd": "${workspaceFolder}" },
+      "isBackground": true,
+      "presentation": { "panel": "dedicated", "reveal": "always", "group": "logihive" },
+      "problemMatcher": []
+    },
+    {
+      "label": "LogiHive: Stress Simulator",
+      "type": "shell",
+      "command": "${workspaceFolder}\\.venv\\Scripts\\python.exe",
+      "args": ["simulator.py", "--host", "http://localhost:8000", "--concurrency", "20", "--duration", "0"],
+      "options": { "cwd": "${workspaceFolder}" },
+      "isBackground": true,
+      "presentation": { "panel": "dedicated", "reveal": "always", "group": "logihive" },
+      "problemMatcher": []
+    },
+    {
+      "label": "LogiHive: Run All",
+      "dependsOn": [
+        "LogiHive: FastAPI Gateway",
+        "LogiHive: Streamlit Dashboard"
+      ],
+      "dependsOrder": "parallel",
+      "problemMatcher": []
+    }
+  ]
+}

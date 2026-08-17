@@ -1,31 +1,85 @@
-# interfaces.py
+"""
+interfaces.py
+LogiHive Q-Commerce :: System Data Contracts & Shared Thread Pool
+--------------------------------------------------------------------
+Single source of truth for every payload shape that crosses a process
+boundary in this system (HTTP request bodies, Redis stream messages,
+LangGraph state fields). Every other module imports from here rather
+than redefining shapes locally, so a schema change only ever happens
+in one place.
+"""
+
+from __future__ import annotations
+
 import os
-from pydantic import BaseModel, Field
-from typing import List, Dict, Any, Annotated
 from concurrent.futures import ThreadPoolExecutor
 
-# Architectural pool isolation logic to keep NetworkX math from hijacking the system
-GLOBAL_EXECUTOR = ThreadPoolExecutor(
-    max_workers=int(os.getenv("LOGIHIVE_MAX_WORKERS", 4)),
-    thread_name_prefix="LogiTwin_Compute_Worker"
+from pydantic import BaseModel, ConfigDict, Field
+
+# --------------------------------------------------------------------------
+# Shared executor
+# --------------------------------------------------------------------------
+# One process-wide pool for CPU-bound work (NetworkX Dijkstra recalculation,
+# JSON-heavy tensor post-processing, etc.) that must never block the FastAPI
+# event loop. Sized via env var so deployment can tune it per-host without a
+# code change. This executor is intentionally separate from the dedicated
+# single-worker executor LangGraph uses internally (see agents/graph.py) to
+# serialize access to the SQLite checkpointer.
+
+EXECUTOR = ThreadPoolExecutor(
+    max_workers=int(os.getenv("LOGIHIVE_EXECUTOR_WORKERS", "8")),
+    thread_name_prefix="logihive-cpu",
 )
 
+
+# --------------------------------------------------------------------------
+# Data contracts
+# --------------------------------------------------------------------------
+
 class RiderTelemetry(BaseModel):
-    """Real-time location data packets received from delivery riders."""
-    rider_id: str = Field(..., description="Unique identifier of the rider")
-    latitude: float = Field(..., description="Current GPS latitude coordinate")
-    longitude: float = Field(..., description="Current GPS longitude coordinate")
-    current_order_id: str = Field(..., description="Active order ID assigned to rider")
+    """A single GPS/status ping from a rider's device. High-volume,
+    fire-and-forget: consumed off the Redis stream by the ingestion
+    worker to keep corridor congestion estimates fresh.
+    """
+
+    model_config = ConfigDict(extra="forbid")
+
+    rider_id: str = Field(..., min_length=1, max_length=64)
+    dark_store_id: str = Field(..., min_length=1, max_length=64)
+    lat: float = Field(..., ge=-90.0, le=90.0)
+    lon: float = Field(..., ge=-180.0, le=180.0)
+    speed_kmph: float = Field(..., ge=0.0, le=120.0)
+    battery_pct: float = Field(..., ge=0.0, le=100.0)
+    active_order_id: str | None = None
+    timestamp: float = Field(..., description="Unix epoch seconds")
+
 
 class DarkStoreInventory(BaseModel):
-    """Live inventory level monitoring thresholds from local fulfillment nodes."""
-    store_id: str = Field(..., description="Unique ID of the neighborhood dark store")
-    item_sku: str = Field(..., description="Stock Keeping Unit identifier")
-    current_stock_level: int = Field(..., description="Current item count")
-    threshold_limit: int = Field(..., description="Safety threshold level before blackout risk")
+    """Point-in-time stock level for a single SKU at a dark store."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    dark_store_id: str = Field(..., min_length=1, max_length=64)
+    sku_id: str = Field(..., min_length=1, max_length=64)
+    units_available: int = Field(..., ge=0)
+    reorder_threshold: int = Field(default=20, ge=0)
+    updated_at: float = Field(..., description="Unix epoch seconds")
+
 
 class DisruptionAlert(BaseModel):
-    """Unstructured text anomalies arriving from external APIs."""
-    alert_id: str = Field(..., description="Unique identifier for the incoming incident")
-    location_zone: str = Field(..., description="Target Mumbai geographical region pocket")
-    alert_text: str = Field(..., description="Raw textual news snippet details")
+    """An unstructured or semi-structured disruption report — the input
+    to the Analyst Agent. `raw_text` is what gets parsed by the local
+    Ollama VLM into a risk tensor.
+    """
+
+    model_config = ConfigDict(extra="forbid")
+
+    alert_id: str = Field(..., min_length=1, max_length=64)
+    category: str = Field(..., min_length=1, max_length=64)
+    affected_area: str = Field(..., min_length=1, max_length=64)
+    raw_text: str = Field(..., min_length=1, max_length=4000)
+    reported_at: float = Field(..., description="Unix epoch seconds")
+    severity_hint: str = Field(default="medium")
+
+
+__all__ = ["EXECUTOR", "RiderTelemetry", "DarkStoreInventory", "DisruptionAlert"]
